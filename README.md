@@ -1,2 +1,3 @@
 # AttendX
-QR based attendance solution for events
+
+QR based attendance solution for offline events.
