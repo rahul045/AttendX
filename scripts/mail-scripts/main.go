@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -10,6 +12,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/skip2/go-qrcode"
 	"github.com/yuin/goldmark"
 	meta "github.com/yuin/goldmark-meta"
 	"github.com/yuin/goldmark/parser"
@@ -28,17 +31,14 @@ func main() {
 	)
 
 	jsonFile, err := os.Open("emails.json")
-
 	if err != nil {
 		log.Print(err)
 	}
-
 	defer jsonFile.Close()
 
 	byteValue, _ := ioutil.ReadAll(jsonFile)
 
 	var list subscriberList
-
 	json.Unmarshal(byteValue, &list)
 
 	content, _ := ioutil.ReadFile("../../content/post/example.md")
@@ -56,7 +56,6 @@ func main() {
 	t, _ = t.ParseFiles("template.html")
 
 	var body bytes.Buffer
-
 	if err := t.Execute(&body, struct {
 		Content string
 		Title   string
@@ -68,10 +67,40 @@ func main() {
 	}
 	html := html.UnescapeString(body.String())
 
-	send(html, list.Subscribers)
+	emailToHash := make(map[string]string)
+	for _, email := range list.Subscribers {
+		// Use SHA-256 to hash the email
+		hash := sha256.Sum256([]byte(email))
+		// Convert the hash to a hex string
+		hashHex := hex.EncodeToString(hash[:])
+		// Store the email-to-hash mapping
+		emailToHash[email] = hashHex
+	}
+
+	// Print the emailToHash map
+	printEmailToHash(emailToHash)
+
+	// Generate QR codes for each hash
+	for email, hashHex := range emailToHash {
+		fileName := fmt.Sprintf("./qrcodes/%s.png", hashHex)
+		err := qrcode.WriteFile(hashHex, qrcode.Medium, 256, fileName)
+		if err != nil {
+			log.Printf("Failed to generate QR code for %s: %v", email, err)
+		}
+	}
+
+	// Send emails with QR code attachments
+	send(html, list.Subscribers, emailToHash)
 }
 
-func send(body string, to []string) {
+func printEmailToHash(emailToHash map[string]string) {
+	fmt.Println("Email-to-Hash Map:")
+	for email, hash := range emailToHash {
+		fmt.Printf("Email: %s, Hash: %s\n", email, hash)
+	}
+}
+
+func send(body string, to []string, emailToHash map[string]string) {
 	from := os.Getenv("MAIL_ID")
 	pass := os.Getenv("MAIL_PASSWORD")
 
@@ -86,13 +115,24 @@ func send(body string, to []string) {
 		log.Fatal(err)
 	}
 
-	m := gomail.NewMessage()
 	for _, r := range to {
 		fmt.Printf("Sending email to: %s\n", r)
+		m := gomail.NewMessage()
 		m.SetHeader("From", from)
 		m.SetAddressHeader("To", r, r)
 		m.SetHeader("Subject", "OSDHACK '24 Attendance QR")
 		m.SetBody("text/html", string(bodyContent))
+
+		// Get the hash for the current email
+		hashHex, ok := emailToHash[r]
+		if ok {
+			// Path to the QR code file
+			qrFilePath := fmt.Sprintf("./qrcodes/%s.png", hashHex)
+			// Attach the QR code file to the email and rename it to "qr.png"
+			m.Attach(qrFilePath, gomail.Rename("qr.png"))
+		} else {
+			log.Printf("Could not find hash for email %q", r)
+		}
 
 		if err := gomail.Send(s, m); err != nil {
 			log.Printf("Could not send email to %q: %v", r, err)
