@@ -41,3 +41,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+#emails and qrs
+/scripts/mail-scripts/qrcodes
+/scripts/mail-scripts/emails.json
